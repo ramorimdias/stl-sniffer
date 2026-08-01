@@ -18,10 +18,10 @@ class Settings(BaseSettings):
     source_feeds: str = ""
     source_poll_interval_seconds: int = 900
     source_enable_internet_archive: bool = True
-    source_enable_academic_torrents: bool = True
-    source_internet_archive_query: str = 'mediatype:data AND (title:(stl OR 3mf OR "3d model" OR "3d print") OR description:(stl OR 3mf OR "3d model" OR "3d print"))'
+    source_enable_academic_torrents: bool = False
+    source_internet_archive_query: str = '(title:(stl OR 3mf OR "3d model" OR "3d print") OR description:(stl OR 3mf OR "3d model" OR "3d print"))'
     source_internet_archive_rows: int = 50
-    source_academic_torrents_limit: int = 500
+    source_academic_torrents_limit: int = 50
     model_extensions: str = ".stl,.3mf,.obj,.step,.stp,.iges,.igs,.scad"
     data_dir: Path = Path("/data")
 

@@ -70,13 +70,24 @@ def parse_feed(xml_text: str, feed_url: str) -> list[tuple[str, str]]:
     return results
 
 
-def _queue_magnet(magnet: str, source_url: str, source_key: str) -> bool:
+def _mark_seen(value: str, source_key: str) -> bool:
     client = redis_client()
-    digest = hashlib.sha256(magnet.encode("utf-8", errors="ignore")).hexdigest()
+    digest = hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
     seen_key = f"stl-sniffer:source-seen:{source_key}:{digest}"
-    if not client.set(seen_key, "1", nx=True, ex=SEEN_TTL_SECONDS):
+    return bool(client.set(seen_key, "1", nx=True, ex=SEEN_TTL_SECONDS))
+
+
+def _queue_magnet(magnet: str, source_url: str, source_key: str) -> bool:
+    if not _mark_seen(magnet, source_key):
         return False
     enqueue({"kind": "magnet", "magnet_uri": magnet, "source_url": source_url})
+    return True
+
+
+def _queue_torrent_url(torrent_url: str, source_url: str, source_key: str) -> bool:
+    if not _mark_seen(torrent_url, source_key):
+        return False
+    enqueue({"kind": "torrent_url", "torrent_url": torrent_url, "source_url": source_url})
     return True
 
 
@@ -93,11 +104,6 @@ def poll_feed(feed_url: str) -> int:
     for magnet, source_url in pairs:
         queued += int(_queue_magnet(magnet, source_url, "feed"))
     return queued
-
-
-def _ia_torrent_magnet(identifier: str) -> str:
-    torrent_url = f"https://archive.org/download/{urllib.parse.quote(identifier)}/{urllib.parse.quote(identifier)}_archive.torrent"
-    return f"magnet:?xs={urllib.parse.quote(torrent_url, safe=':/')}"
 
 
 def poll_internet_archive(query: str, rows: int) -> int:
@@ -119,9 +125,10 @@ def poll_internet_archive(query: str, rows: int) -> int:
         identifier = str(doc.get("identifier") or "").strip()
         if not identifier:
             continue
-        source_url = f"https://archive.org/details/{urllib.parse.quote(identifier)}"
-        magnet = _ia_torrent_magnet(identifier)
-        queued += int(_queue_magnet(magnet, source_url, "internet-archive"))
+        escaped = urllib.parse.quote(identifier, safe="")
+        source_url = f"https://archive.org/details/{escaped}"
+        torrent_url = f"https://archive.org/download/{escaped}/{escaped}_archive.torrent"
+        queued += int(_queue_torrent_url(torrent_url, source_url, "internet-archive"))
     return queued
 
 
@@ -136,19 +143,23 @@ def poll_academic_torrents(limit: int) -> int:
 
     queued = 0
     inspected = 0
+    seen_hashes: set[str] = set()
     for node in root.iter():
         if inspected >= max(1, limit):
             break
-        texts = [node.text or "", node.tail or ""]
-        texts.extend(str(value) for value in node.attrib.values())
-        blob = " ".join(texts)
-        infohash = next(iter(INFOHASH_RE.findall(blob)), None)
-        if not infohash:
-            continue
-        inspected += 1
-        magnet = f"magnet:?xt=urn:btih:{infohash.lower()}"
-        source_url = "https://academictorrents.com/"
-        queued += int(_queue_magnet(magnet, source_url, "academic-torrents"))
+        values = [node.text or "", node.tail or ""]
+        values.extend(str(value) for value in node.attrib.values())
+        blob = " ".join(values)
+        for infohash in INFOHASH_RE.findall(blob):
+            normalized = infohash.lower()
+            if normalized in seen_hashes:
+                continue
+            seen_hashes.add(normalized)
+            inspected += 1
+            magnet = f"magnet:?xt=urn:btih:{normalized}"
+            queued += int(_queue_magnet(magnet, "https://academictorrents.com/", "academic-torrents"))
+            if inspected >= max(1, limit):
+                break
     return queued
 
 

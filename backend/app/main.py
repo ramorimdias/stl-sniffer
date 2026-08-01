@@ -60,12 +60,12 @@ def health() -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "app_name": settings.app_name})
+    return templates.TemplateResponse(request, "index.html", {"app_name": settings.app_name})
 
 
 @app.get("/submit", response_class=HTMLResponse)
 def submit_page(request: Request):
-    return templates.TemplateResponse("submit.html", {"request": request, "app_name": settings.app_name})
+    return templates.TemplateResponse(request, "submit.html", {"app_name": settings.app_name})
 
 
 @app.get("/torrent/{torrent_id}", response_class=HTMLResponse)
@@ -78,9 +78,9 @@ def torrent_page(request: Request, torrent_id: int):
             raise HTTPException(status_code=404, detail="Torrent not found")
         model_files = [item for item in torrent.files if item.is_model]
         return templates.TemplateResponse(
+            request,
             "torrent.html",
             {
-                "request": request,
                 "app_name": settings.app_name,
                 "torrent": torrent,
                 "model_files": model_files,

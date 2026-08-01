@@ -1,0 +1,181 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stl_sniffer}
+      POSTGRES_USER: ${POSTGRES_USER:-stl_sniffer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - stl_sniffer_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stl_sniffer} -d ${POSTGRES_DB:-stl_sniffer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - stl_sniffer_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.37
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY in .env}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - stl_sniffer_meili:/meili_data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:7700/health | grep -q available"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      APP_NAME: ${APP_NAME:-STL Sniffer}
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MEILI_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY in .env}
+      MEILI_INDEX: ${MEILI_INDEX:-torrents}
+      MAX_TORRENT_BYTES: ${MAX_TORRENT_BYTES:-5242880}
+      MAGNET_RESOLVE_TIMEOUT_SECONDS: ${MAGNET_RESOLVE_TIMEOUT_SECONDS:-75}
+      SUBMISSION_RATE_LIMIT_PER_HOUR: ${SUBMISSION_RATE_LIMIT_PER_HOUR:-30}
+      MODEL_EXTENSIONS: ${MODEL_EXTENSIONS:-.stl,.3mf,.obj,.step,.stp,.iges,.igs,.scad}
+      DATA_DIR: /data
+    volumes:
+      - stl_sniffer_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stl-sniffer.rule=Host(`${STL_SNIFFER_HOSTNAME:-stlsniffer.example.com}`)"
+      - "traefik.http.routers.stl-sniffer.entrypoints=websecure"
+      - "traefik.http.routers.stl-sniffer.tls.certresolver=letsencrypt"
+      - "traefik.http.services.stl-sniffer.loadbalancer.server.port=8000"
+    networks:
+      - default
+      - aio_network
+
+  source-poller:
+    build:
+      context: ./backend
+    profiles: ["crawler"]
+    restart: unless-stopped
+    command: ["python", "-m", "app.source_poller"]
+    environment:
+      APP_NAME: ${APP_NAME:-STL Sniffer}
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MEILI_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY in .env}
+      SOURCE_FEEDS: ${SOURCE_FEEDS:-}
+      SOURCE_POLL_INTERVAL_SECONDS: ${SOURCE_POLL_INTERVAL_SECONDS:-900}
+      DATA_DIR: /data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+
+  tracker:
+    profiles: ["tracker"]
+    build:
+      context: https://github.com/torrust/torrust-tracker.git#develop
+      dockerfile: Containerfile
+      target: release
+    image: stl-sniffer-torrust:local
+    restart: unless-stopped
+    environment:
+      USER_ID: "1000"
+      HTTP_PORT: "7070"
+      UDP_PORT: "6969"
+      API_PORT: "1212"
+      HEALTH_CHECK_API_PORT: "1313"
+      TORRUST_TRACKER_CONFIG_OVERRIDE_HTTP_API__ACCESS_TOKENS__ADMIN: ${TORRUST_TRACKER_ADMIN_TOKEN:-change-me-before-enabling-tracker}
+    ports:
+      - "${TRACKER_HTTP_PORT:-7070}:7070/tcp"
+      - "${TRACKER_UDP_PORT:-6969}:6969/udp"
+    volumes:
+      - stl_sniffer_tracker_lib:/var/lib/torrust/tracker
+      - stl_sniffer_tracker_log:/var/log/torrust/tracker
+      - stl_sniffer_tracker_etc:/etc/torrust/tracker
+    networks:
+      - default
+
+  worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      APP_NAME: ${APP_NAME:-STL Sniffer}
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MEILI_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY in .env}
+      MEILI_INDEX: ${MEILI_INDEX:-torrents}
+      MAX_TORRENT_BYTES: ${MAX_TORRENT_BYTES:-5242880}
+      MAGNET_RESOLVE_TIMEOUT_SECONDS: ${MAGNET_RESOLVE_TIMEOUT_SECONDS:-75}
+      SUBMISSION_RATE_LIMIT_PER_HOUR: ${SUBMISSION_RATE_LIMIT_PER_HOUR:-30}
+      MODEL_EXTENSIONS: ${MODEL_EXTENSIONS:-.stl,.3mf,.obj,.step,.stp,.iges,.igs,.scad}
+      DATA_DIR: /data
+    volumes:
+      - stl_sniffer_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    networks:
+      - default
+
+volumes:
+  stl_sniffer_postgres:
+  stl_sniffer_redis:
+  stl_sniffer_meili:
+  stl_sniffer_data:
+  stl_sniffer_tracker_lib:
+  stl_sniffer_tracker_log:
+  stl_sniffer_tracker_etc:
+
+networks:
+  aio_network:
+    external: true
+    name: ${DOCKER_NETWORK:-aio_network}

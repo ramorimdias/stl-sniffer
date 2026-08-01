@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ torrent.name }} · STL Sniffer{% endblock %}
+{% block content %}
+<section class="detail">
+  <a class="back" href="/">← Back to search</a>
+  <div class="eyebrow">INDEXED TORRENT</div>
+  <h1>{{ torrent.name }}</h1>
+  <div class="badges">
+    {% for format in torrent.formats %}<span>{{ format.upper() }}</span>{% endfor %}
+  </div>
+
+  <div class="metric-grid">
+    <div><strong>{{ torrent.model_file_count }}</strong><span>model files</span></div>
+    <div><strong>{{ torrent.file_count }}</strong><span>total files</span></div>
+    <div><strong>{{ torrent.metadata_source }}</strong><span>metadata source</span></div>
+    <div><strong>{{ torrent.discovered_at.strftime('%Y-%m-%d') }}</strong><span>discovered</span></div>
+  </div>
+
+  {% if torrent.magnet_uri %}
+  <div class="actions"><a class="button" href="{{ torrent.magnet_uri }}">Open magnet</a></div>
+  {% endif %}
+
+  <div class="panel metadata">
+    <h2>Provenance</h2>
+    {% if torrent.source_url %}<p><strong>Source:</strong> <a href="{{ torrent.source_url }}" rel="nofollow noreferrer">{{ torrent.source_url }}</a></p>{% endif %}
+    {% if torrent.info_hash_v1 %}<p><strong>BTIH:</strong> <code>{{ torrent.info_hash_v1 }}</code></p>{% endif %}
+    {% if torrent.info_hash_v2 %}<p><strong>BTMH/SHA-256:</strong> <code>{{ torrent.info_hash_v2 }}</code></p>{% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>3D model files</h2>
+    <div class="file-list">
+      {% for file in model_files %}
+      <div><code>{{ file.path }}</code><span>{{ file.extension }}</span></div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

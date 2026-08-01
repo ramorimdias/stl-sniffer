@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Submit · STL Sniffer{% endblock %}
+{% block content %}
+<section class="narrow">
+  <div class="eyebrow">INGESTION</div>
+  <h1>Submit torrent metadata.</h1>
+  <p>STL Sniffer resolves metadata and indexes only torrents containing configured 3D-model extensions. It does not download the model payload.</p>
+
+  <div class="panel">
+    <h2>Magnet link</h2>
+    <form id="magnet-form" class="stack">
+      <textarea id="magnet" required placeholder="magnet:?xt=urn:btih:…"></textarea>
+      <input id="magnet-source" type="url" placeholder="Original/source page URL (optional)">
+      <button class="button" type="submit">Inspect magnet</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>.torrent file</h2>
+    <form id="torrent-form" class="stack">
+      <input id="torrent-file" type="file" accept=".torrent,application/x-bittorrent" required>
+      <input id="torrent-source" type="url" placeholder="Original/source page URL (optional)">
+      <button class="button secondary" type="submit">Inspect file</button>
+    </form>
+  </div>
+  <div id="job" class="job hidden"></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const jobBox = document.getElementById('job');
+async function poll(jobId) {
+  jobBox.classList.remove('hidden');
+  const response = await fetch(`/api/jobs/${jobId}`);
+  const job = await response.json();
+  jobBox.innerHTML = `<strong>${job.status || 'unknown'}</strong><span>${job.message || ''}</span>`;
+  if (job.status === 'done' && job.torrent_id) {
+    jobBox.innerHTML += `<a class="button small" href="/torrent/${job.torrent_id}">Open indexed torrent</a>`;
+    return;
+  }
+  if (['failed','rejected'].includes(job.status)) return;
+  setTimeout(() => poll(jobId), 1500);
+}
+document.getElementById('magnet-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const body = { magnet_uri: document.getElementById('magnet').value.trim() };
+  const source = document.getElementById('magnet-source').value.trim();
+  if (source) body.source_url = source;
+  const response = await fetch('/api/submissions/magnet', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  const data = await response.json();
+  if (!response.ok) { jobBox.classList.remove('hidden'); jobBox.textContent = data.detail || 'Submission failed'; return; }
+  poll(data.job_id);
+});
+document.getElementById('torrent-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const data = new FormData();
+  data.append('torrent', document.getElementById('torrent-file').files[0]);
+  const source = document.getElementById('torrent-source').value.trim();
+  if (source) data.append('source_url', source);
+  const response = await fetch('/api/submissions/torrent', { method:'POST', body:data });
+  const result = await response.json();
+  if (!response.ok) { jobBox.classList.remove('hidden'); jobBox.textContent = result.detail || 'Submission failed'; return; }
+  poll(result.job_id);
+});
+</script>
+{% endblock %}

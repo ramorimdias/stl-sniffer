@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}STL Sniffer · Search{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="eyebrow">3D MODEL TORRENT INDEX</div>
+  <h1>Sniff out printable files.</h1>
+  <p>Search torrent metadata for STL, 3MF, STEP, OBJ and other model formats without hosting the payloads.</p>
+  <form id="search-form" class="search-row">
+    <input id="q" name="q" type="search" placeholder="Search models, filenames, projects…" autocomplete="off">
+    <select id="format" name="format">
+      <option value="">All formats</option>
+      <option value="stl">STL</option>
+      <option value="3mf">3MF</option>
+      <option value="step">STEP</option>
+      <option value="stp">STP</option>
+      <option value="obj">OBJ</option>
+      <option value="scad">SCAD</option>
+    </select>
+    <button class="button" type="submit">Search</button>
+  </form>
+  <div id="stats" class="stats"></div>
+</section>
+<section>
+  <div class="section-heading"><h2>Indexed torrents</h2><span id="result-meta"></span></div>
+  <div id="results" class="results"><div class="empty">Loading index…</div></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const results = document.getElementById('results');
+const meta = document.getElementById('result-meta');
+const form = document.getElementById('search-form');
+function bytes(value) {
+  if (!value) return '0 B';
+  const units = ['B','KB','MB','GB','TB'];
+  let i = 0, n = Number(value);
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+async function load() {
+  const q = document.getElementById('q').value.trim();
+  const fmt = document.getElementById('format').value;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (fmt) params.set('format', fmt);
+  results.innerHTML = '<div class="empty">Sniffing metadata…</div>';
+  const response = await fetch('/api/torrents?' + params.toString());
+  const data = await response.json();
+  meta.textContent = `${data.items.length} result${data.items.length === 1 ? '' : 's'}`;
+  if (!data.items.length) {
+    results.innerHTML = '<div class="empty">No indexed model torrents matched.</div>';
+    return;
+  }
+  results.innerHTML = data.items.map(item => `
+    <a class="result-card" href="/torrent/${item.id}">
+      <div>
+        <div class="result-title">${esc(item.name)}</div>
+        <div class="badges">${(item.formats || []).map(f => `<span>${esc(f.toUpperCase())}</span>`).join('')}</div>
+      </div>
+      <div class="result-stats">
+        <strong>${item.model_file_count}</strong><small>model files</small>
+        <strong>${bytes(item.total_size)}</strong><small>torrent size</small>
+      </div>
+    </a>`).join('');
+}
+form.addEventListener('submit', event => { event.preventDefault(); load(); });
+fetch('/api/stats').then(r => r.json()).then(s => {
+  document.getElementById('stats').textContent = `${s.torrents.toLocaleString()} torrents · ${s.model_files.toLocaleString()} model files indexed`;
+});
+load();
+</script>
+{% endblock %}

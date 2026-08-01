@@ -5,8 +5,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from sqlalchemy import or_, select
 
+from .config import get_settings
 from .db import SessionLocal, init_db
 from .metadata_resolver import resolve_magnet
 from .models import Torrent, TorrentFile
@@ -24,6 +26,22 @@ def _find_existing(session, v1: str | None, v2: str | None) -> Torrent | None:
     if not conditions:
         return None
     return session.scalar(select(Torrent).where(or_(*conditions)).limit(1))
+
+
+def _download_torrent(url: str) -> Path:
+    settings = get_settings()
+    target = settings.tmp_dir / f"resolved-url-{int(time.time() * 1000)}.torrent"
+    headers = {"User-Agent": "STL-Sniffer/0.2 metadata-indexer"}
+    with httpx.Client(timeout=30, follow_redirects=True, headers=headers) as http:
+        response = http.get(url)
+        response.raise_for_status()
+        content = response.content
+    if not content:
+        raise ValueError("Torrent URL returned an empty response")
+    if len(content) > settings.max_torrent_bytes:
+        raise ValueError("Torrent metadata exceeds configured size limit")
+    target.write_bytes(content)
+    return target
 
 
 def process_job(payload: dict) -> None:
@@ -48,6 +66,11 @@ def process_job(payload: dict) -> None:
             parsed = parse_torrent_file(resolved_path)
             magnet_uri = None
             metadata_source = "torrent_upload"
+        elif kind == "torrent_url":
+            resolved_path = _download_torrent(payload["torrent_url"])
+            parsed = parse_torrent_file(resolved_path)
+            magnet_uri = None
+            metadata_source = "torrent_url"
         else:
             raise ValueError("Unknown ingestion job type")
 
